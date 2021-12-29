@@ -1,6 +1,18 @@
 
+import zmq
 from argparse import ArgumentParser
 from utils import alnum
+
+def send_command(ip, port, args):
+    context = zmq.Context()
+    sock = context.socket(zmq.REQ)
+    sock.connect(f'tcp://{ip}:{port}')
+
+    sock.send_json(args)
+    print(sock.recv_string())
+
+    sock.close()
+    context.destroy()
 
 def main():
     parser = ArgumentParser(description='Program that performs RPC on nodes '
@@ -26,6 +38,12 @@ def main():
         type=alnum)
 
     args = parser.parse_args()
+
+    method_args = {}
+    for k in set(vars(args).keys()).difference(['ip', 'port']):
+        method_args[k] = getattr(args, k)
+
+    send_command(args.ip, args.port, method_args)
 
 if __name__ == '__main__':
     main()
