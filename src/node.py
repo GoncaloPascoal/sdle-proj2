@@ -1,5 +1,5 @@
 
-import asyncio
+import asyncio, atexit
 
 from argparse import ArgumentParser, ArgumentTypeError, RawDescriptionHelpFormatter
 from utils import alnum
@@ -24,6 +24,9 @@ def parse_address(addr):
     
     return ip, port
 
+def cleanup(node: Server):
+    node.stop()
+
 async def main():
     parser = ArgumentParser(description='Node that is part of a decentralized '
         'timeline newtwork.\nIt publishes small text messages (posts) to its '
@@ -44,6 +47,8 @@ async def main():
 
     node = Server()
     await node.listen(args.port)
+
+    atexit.register(cleanup, node)
 
     # Start the bootstrapping process (providing addresses for more nodes in 
     # the command line arguments gives more fault tolerance)
