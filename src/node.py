@@ -1,31 +1,35 @@
 
-import asyncio, atexit
-
 from argparse import ArgumentParser, ArgumentTypeError, RawDescriptionHelpFormatter
-from utils import alnum
-
+import asyncio, atexit, json, zmq
 from kademlia.network import Server
+from utils import alnum
 
 def parse_address(addr):
     parts = addr.split(':')
 
     if len(parts) < 2:
         raise ArgumentTypeError('Address must be in ip:port format')
-    
+
     ip = parts[0]
 
     if ip == '':
         ip = '127.0.0.1'
-    
+
     try:
         port = int(parts[1])
     except:
         raise ArgumentTypeError('Port must be an integer')
-    
+
     return ip, port
 
 def cleanup(node: Server):
     node.stop()
+
+def post():
+    pass
+
+def subscribe():
+    pass
 
 async def main():
     parser = ArgumentParser(description='Node that is part of a decentralized '
@@ -50,9 +54,36 @@ async def main():
 
     atexit.register(cleanup, node)
 
-    # Start the bootstrapping process (providing addresses for more nodes in 
+    # Start the bootstrapping process (providing addresses for more nodes in
     # the command line arguments gives more fault tolerance)
     await node.bootstrap(args.peers)
+
+    print('Bootstrap process finished...')
+
+    context = zmq.Context()
+    sock = context.socket(zmq.ROUTER)
+    sock.bind(f'tcp://*:{args.rpc_port}')
+
+    commands = {
+        'POST': post,
+        'SUB': subscribe,
+    }
+
+    print(f'Node {args.id} online...')
+
+    while True:
+        parts = sock.recv_multipart()
+        command = json.loads(parts[2].decode('utf-8'))
+
+        if (isinstance(command, dict) and 'method' in command
+                and command['method'] in commands):
+            func = commands[command['method']]
+            func()
+            parts[2] = b'OK'
+        else:
+            parts[2] = b'Error: malformed command'
+
+        sock.send_multipart(parts)
 
 if __name__ == '__main__':
     asyncio.run(main())
