@@ -41,7 +41,7 @@ async def main():
         type=int)
     parser.add_argument('port', help='port used for Kademlia DHT', type=int)
     parser.add_argument('peers', help='ip:port pairs to use in the bootstrapping process',
-        metavar='PEER', nargs='+', type=parse_address)
+        metavar='PEER', nargs='*', type=parse_address)
 
     args = parser.parse_args()
 
@@ -50,9 +50,11 @@ async def main():
 
     atexit.register(cleanup, node)
 
-    # Start the bootstrapping process (providing addresses for more nodes in 
-    # the command line arguments gives more fault tolerance)
-    await node.bootstrap(args.peers)
+    # The initiator peer doesn't need to call bootstrap
+    if len(args.peers) != 0:
+        # Start the bootstrapping process (providing addresses for more nodes in 
+        # the command line arguments gives more fault tolerance)
+        await node.bootstrap(args.peers)
 
 if __name__ == '__main__':
     asyncio.run(main())

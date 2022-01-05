@@ -27,7 +27,7 @@ def main():
 
     parser_post = subparsers.add_parser('POST', help='post a message to a node\'s timeline')
     parser_sub  = subparsers.add_parser('SUB' , help='subscribe to a node with a specific id')
-    parser_get = subparsers.add_parser('GET', help='get a node\'s timeline')
+    parser_get  = subparsers.add_parser('GET' , help='get a node\'s timeline')
 
     for subparser in [parser_post, parser_sub, parser_get]:
         subparser.add_argument('port', help='port of target node', type=int)
