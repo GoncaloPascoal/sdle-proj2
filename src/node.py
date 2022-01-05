@@ -1,8 +1,18 @@
 
 from argparse import ArgumentParser, ArgumentTypeError, RawDescriptionHelpFormatter
-import asyncio, atexit, json, zmq
+import asyncio, atexit, json, time, zmq
 from kademlia.network import Server
 from utils import alnum
+from datetime import datetime
+
+class Post:
+    def __init__(self, message: str):
+        self.timestamp = time.time_ns()
+        self.message = message
+    
+    def __repr__(self) -> str:
+        dt = datetime.fromtimestamp(self.timestamp / 1e9)
+        return f'({dt} - {self.message})'
 
 def parse_address(addr):
     parts = addr.split(':')
@@ -26,10 +36,15 @@ def cleanup(node: Server):
     node.stop()
 
 def post(message):
+    global posts
+
     print(f'POST: {message}')
+    posts.append(Post(message))
 
 def subscribe(id):
     print(f'SUB: {id}')
+
+posts = []
 
 async def main():
     parser = ArgumentParser(description='Node that is part of a decentralized '
