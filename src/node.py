@@ -25,11 +25,11 @@ def parse_address(addr):
 def cleanup(node: Server):
     node.stop()
 
-def post():
-    pass
+def post(message):
+    print(f'POST: {message}')
 
-def subscribe():
-    pass
+def subscribe(id):
+    print(f'SUB: {id}')
 
 async def main():
     parser = ArgumentParser(description='Node that is part of a decentralized '
@@ -44,8 +44,9 @@ async def main():
     parser.add_argument('rpc_port', help='port used for remote procedure call',
         type=int)
     parser.add_argument('port', help='port used for Kademlia DHT', type=int)
-    parser.add_argument('peers', help='ip:port pairs to use in the bootstrapping process',
-        metavar='PEER', nargs='+', type=parse_address)
+    parser.add_argument('peers', help='ip:port pairs to use in the bootstrapping process'
+        ' (leave empty to start a new network)',
+        metavar='PEER', nargs='*', type=parse_address)
 
     args = parser.parse_args()
 
@@ -54,11 +55,14 @@ async def main():
 
     atexit.register(cleanup, node)
 
-    # Start the bootstrapping process (providing addresses for more nodes in
-    # the command line arguments gives more fault tolerance)
-    await node.bootstrap(args.peers)
+    if args.peers:
+        # Start the bootstrapping process (providing addresses for more nodes in
+        # the command line arguments gives more fault tolerance)
+        await node.bootstrap(args.peers)
 
-    print('Bootstrap process finished...')
+        print('Bootstrap process finished...')
+    else:
+        print('Starting a new Kademlia network...')
 
     context = zmq.Context()
     sock = context.socket(zmq.ROUTER)
@@ -78,7 +82,8 @@ async def main():
         if (isinstance(command, dict) and 'method' in command
                 and command['method'] in commands):
             func = commands[command['method']]
-            func()
+            del command['method']
+            func(**command)
             parts[2] = b'OK'
         else:
             parts[2] = b'Error: malformed command'
