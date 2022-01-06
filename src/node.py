@@ -35,16 +35,36 @@ def parse_address(addr):
 def cleanup(node: Server):
     node.stop()
 
-def post(message):
+def post(peer_id, message):
     global posts
 
     print(f'POST: {message}')
     posts.append(Post(message))
+    return b'OK'
 
-def subscribe(id):
+def subscribe(peer_id, id):
+    global subs
+    if id == peer_id:
+        return b'Error: invalid SUB'
+    
+    subs.add(id)
     print(f'SUB: {id}')
+    return b'OK'
+
+def get_timeline(peer_id, id):
+    global subs
+    if id == peer_id:
+        # TODO: maybe get timeline locally ?
+        return b'Error: invalid GET'
+
+    if id not in subs:
+        return b'Error: not subbed to this id'
+
+    print(f'Searching for timeline: {id}')
+    return b'OK'
 
 posts = []
+subs = set()
 
 async def main():
     parser = ArgumentParser(description='Node that is part of a decentralized '
@@ -86,6 +106,7 @@ async def main():
     commands = {
         'POST': post,
         'SUB': subscribe,
+        'GET': get_timeline,
     }
 
     print(f'Node {args.id} online...')
@@ -94,12 +115,11 @@ async def main():
         parts = sock.recv_multipart()
         command = json.loads(parts[2].decode('utf-8'))
 
-        if (isinstance(command, dict) and 'method' in command
-                and command['method'] in commands):
+        if isinstance(command, dict) and 'method' in command \
+                and command['method'] in commands:
             func = commands[command['method']]
             del command['method']
-            func(**command)
-            parts[2] = b'OK'
+            parts[2] = func(args.id, **command)
         else:
             parts[2] = b'Error: malformed command'
 
