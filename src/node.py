@@ -4,7 +4,7 @@ import asyncio, atexit, json, logging, time, zmq
 from kademlia.network import Server
 from utils import alnum
 from datetime import datetime
-from typing import ByteString
+from typing import ByteString, Tuple
 
 class Post:
     def __init__(self, message: str):
@@ -15,7 +15,7 @@ class Post:
         dt = datetime.fromtimestamp(self.timestamp / 1e9)
         return f'({dt} - {self.message})'
 
-def parse_address(addr):
+def parse_address(addr: str) -> Tuple[str, int]:
     parts = addr.split(':')
 
     if len(parts) < 2:
@@ -53,7 +53,7 @@ async def subscribe(node: Server, id_self: str, id: str) -> ByteString:
     print(f'SUB: {id}')
     return b'OK'
 
-def get_timeline(peer_id, id):
+def get_timeline(peer_id: str, id: str) -> ByteString:
     global subs
     if id == peer_id:
         # TODO: maybe get timeline locally ?

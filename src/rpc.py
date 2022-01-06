@@ -3,7 +3,7 @@ import zmq
 from argparse import ArgumentParser
 from utils import alnum
 
-def send_command(ip, port, args):
+def send_command(ip: str, port: int, args: dict):
     context = zmq.Context()
     sock = context.socket(zmq.REQ)
     sock.connect(f'tcp://{ip}:{port}')
