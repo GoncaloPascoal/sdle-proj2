@@ -4,6 +4,7 @@ import asyncio, atexit, json, time, zmq
 from kademlia.network import Server
 from utils import alnum
 from datetime import datetime
+from typing import ByteString
 
 class Post:
     def __init__(self, message: str):
@@ -35,18 +36,19 @@ def parse_address(addr):
 def cleanup(node: Server):
     node.stop()
 
-def post(peer_id, message):
+def post(message: str) -> ByteString:
     global posts
 
     print(f'POST: {message}')
     posts.append(Post(message))
     return b'OK'
 
-def subscribe(peer_id, id):
+async def subscribe(node: Server, id_self: str, id: str) -> ByteString:
     global subs
-    if id == peer_id:
-        return b'Error: invalid SUB'
-    
+
+    if id == id_self:
+        return b'Error: a peer cannot subscribe to itself'
+
     subs.add(id)
     print(f'SUB: {id}')
     return b'OK'
@@ -103,10 +105,16 @@ async def main():
     sock = context.socket(zmq.ROUTER)
     sock.bind(f'tcp://*:{args.rpc_port}')
 
-    commands = {
+    rpc_commands = {
         'POST': post,
         'SUB': subscribe,
         'GET': get_timeline,
+    }
+
+    rpc_args = {
+        'POST': [],
+        'SUB': [('node', node), ('id_self', args.id)],
+        'GET': [],
     }
 
     print(f'Node {args.id} online...')
@@ -116,10 +124,14 @@ async def main():
         command = json.loads(parts[2].decode('utf-8'))
 
         if isinstance(command, dict) and 'method' in command \
-                and command['method'] in commands:
-            func = commands[command['method']]
+                and command['method'] in rpc_commands:
+            func = rpc_commands[command['method']]
+
+            for name, value in rpc_args[command['method']]:
+                command[name] = value
+
             del command['method']
-            parts[2] = func(args.id, **command)
+            parts[2] = await func(**command)
         else:
             parts[2] = b'Error: malformed command'
 
