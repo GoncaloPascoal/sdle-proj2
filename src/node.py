@@ -1,6 +1,6 @@
 
 from argparse import ArgumentParser, ArgumentTypeError, RawDescriptionHelpFormatter
-import asyncio, atexit, json, time, zmq
+import asyncio, atexit, json, logging, time, zmq
 from kademlia.network import Server
 from utils import alnum
 from datetime import datetime
@@ -84,8 +84,18 @@ async def main():
     parser.add_argument('peers', help='ip:port pairs to use in the bootstrapping process'
         ' (leave empty to start a new network)',
         metavar='PEER', nargs='*', type=parse_address)
+    parser.add_argument('-l', '--log', help='enable additional Kademlia logging',
+        action='store_true')
 
     args = parser.parse_args()
+
+    if args.log:
+        handler = logging.StreamHandler()
+        handler.setFormatter(logging.Formatter('%(levelname)s - %(message)s'))
+
+        log = logging.getLogger('kademlia')
+        log.setLevel(logging.DEBUG)
+        log.addHandler(handler)
 
     node = Server()
     await node.listen(args.port)
