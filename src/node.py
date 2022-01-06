@@ -68,7 +68,7 @@ def get_timeline(peer_id, id):
 posts = []
 subs = set()
 
-async def main():
+def main():
     parser = ArgumentParser(description='Node that is part of a decentralized '
         'timeline newtwork.\nIt publishes small text messages (posts) to its '
         'timeline and can locate other nodes using a DHT algorithm and '
@@ -97,15 +97,16 @@ async def main():
         log.setLevel(logging.DEBUG)
         log.addHandler(handler)
 
+    loop = asyncio.get_event_loop()
     node = Server()
-    await node.listen(args.port)
+    loop.run_until_complete(node.listen(args.port))
 
     atexit.register(cleanup, node)
 
     if args.peers:
         # Start the bootstrapping process (providing addresses for more nodes in
         # the command line arguments gives more fault tolerance)
-        await node.bootstrap(args.peers)
+        loop.run_until_complete(node.bootstrap(args.peers))
 
         print('Bootstrap process finished...')
     else:
@@ -141,11 +142,11 @@ async def main():
                 command[name] = value
 
             del command['method']
-            parts[2] = await func(**command)
+            parts[2] = loop.run_until_complete(func(**command))
         else:
             parts[2] = b'Error: malformed command'
 
         sock.send_multipart(parts)
 
 if __name__ == '__main__':
-    asyncio.run(main())
+    main()
