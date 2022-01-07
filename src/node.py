@@ -1,6 +1,7 @@
 
-from argparse import ArgumentParser, ArgumentTypeError, RawDescriptionHelpFormatter
+from argparse import ArgumentParser, ArgumentTypeError, Namespace, RawDescriptionHelpFormatter
 import asyncio, atexit, json, logging, time, zmq
+from threading import Thread
 from kademlia.network import Server
 from utils import alnum
 from datetime import datetime
@@ -68,6 +69,45 @@ def get_timeline(peer_id: str, id: str) -> ByteString:
 posts = []
 subs = set()
 
+def handle_requests(node: Server, args: Namespace):
+    loop = asyncio.new_event_loop()
+
+    context = zmq.Context()
+    sock = context.socket(zmq.ROUTER)
+    sock.bind(f'tcp://*:{args.rpc_port}')
+
+    rpc_commands = {
+        'POST': post,
+        'SUB': subscribe,
+        'GET': get_timeline,
+    }
+
+    rpc_args = {
+        'POST': [],
+        'SUB': [('node', node), ('id_self', args.id)],
+        'GET': [],
+    }
+
+    print(f'Node {args.id} online...')
+
+    while True:
+        parts = sock.recv_multipart()
+        command = json.loads(parts[2].decode('utf-8'))
+
+        if isinstance(command, dict) and 'method' in command \
+                and command['method'] in rpc_commands:
+            func = rpc_commands[command['method']]
+
+            for name, value in rpc_args[command['method']]:
+                command[name] = value
+
+            del command['method']
+            parts[2] = loop.run_until_complete(func(**command))
+        else:
+            parts[2] = b'Error: malformed command'
+
+        sock.send_multipart(parts)
+
 def main():
     parser = ArgumentParser(description='Node that is part of a decentralized '
         'timeline newtwork.\nIt publishes small text messages (posts) to its '
@@ -111,42 +151,11 @@ def main():
         print('Bootstrap process finished...')
     else:
         print('Starting a new Kademlia network...')
+    
+    server_thread = Thread(target=handle_requests, args=(node, args))
+    server_thread.start()
 
-    context = zmq.Context()
-    sock = context.socket(zmq.ROUTER)
-    sock.bind(f'tcp://*:{args.rpc_port}')
-
-    rpc_commands = {
-        'POST': post,
-        'SUB': subscribe,
-        'GET': get_timeline,
-    }
-
-    rpc_args = {
-        'POST': [],
-        'SUB': [('node', node), ('id_self', args.id)],
-        'GET': [],
-    }
-
-    print(f'Node {args.id} online...')
-
-    while True:
-        parts = sock.recv_multipart()
-        command = json.loads(parts[2].decode('utf-8'))
-
-        if isinstance(command, dict) and 'method' in command \
-                and command['method'] in rpc_commands:
-            func = rpc_commands[command['method']]
-
-            for name, value in rpc_args[command['method']]:
-                command[name] = value
-
-            del command['method']
-            parts[2] = loop.run_until_complete(func(**command))
-        else:
-            parts[2] = b'Error: malformed command'
-
-        sock.send_multipart(parts)
+    loop.run_forever()
 
 if __name__ == '__main__':
     main()
