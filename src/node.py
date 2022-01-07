@@ -37,7 +37,7 @@ def parse_address(addr: str) -> Tuple[str, int]:
 def cleanup(node: Server):
     node.stop()
 
-def post(message: str) -> ByteString:
+async def post(message: str) -> ByteString:
     global posts
 
     print(f'POST: {message}')
@@ -54,14 +54,15 @@ async def subscribe(node: Server, id_self: str, id: str) -> ByteString:
     print(f'SUB: {id}')
     return b'OK'
 
-def get_timeline(peer_id: str, id: str) -> ByteString:
+async def get_timeline(node: Server, id_self: str, id: str) -> ByteString:
     global subs
-    if id == peer_id:
+
+    if id == id_self:
         # TODO: maybe get timeline locally ?
-        return b'Error: invalid GET'
+        return b'Error: a peer cannot obtain its own timeline'
 
     if id not in subs:
-        return b'Error: not subbed to this id'
+        return b'Error: this peer is not subscribed to this id'
 
     print(f'Searching for timeline: {id}')
     return b'OK'
@@ -85,7 +86,7 @@ def handle_requests(node: Server, args: Namespace):
     rpc_args = {
         'POST': [],
         'SUB': [('node', node), ('id_self', args.id)],
-        'GET': [],
+        'GET': [('node', node), ('id_self', args.id)],
     }
 
     print(f'Node {args.id} online...')
