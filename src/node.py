@@ -1,11 +1,14 @@
 
+import asyncio, json, logging, time, zmq
+
 from argparse import ArgumentParser, ArgumentTypeError, Namespace, RawDescriptionHelpFormatter
-import asyncio, atexit, json, logging, time, zmq
-from threading import Thread
-from kademlia.network import Server
-from utils import alnum
 from datetime import datetime
+from threading import Thread
 from typing import ByteString, Tuple
+from utils import alnum
+
+from kademlia.network import Server
+from kademlia.utils import digest
 
 class Post:
     def __init__(self, message: str):
@@ -34,9 +37,6 @@ def parse_address(addr: str) -> Tuple[str, int]:
 
     return ip, port
 
-def cleanup(node: Server):
-    node.stop()
-
 async def post(message: str) -> ByteString:
     global posts
 
@@ -45,30 +45,31 @@ async def post(message: str) -> ByteString:
     return b'OK'
 
 async def subscribe(node: Server, id_self: str, id: str) -> ByteString:
-    global subs
+    global subscriptions
 
     if id == id_self:
         return b'Error: a peer cannot subscribe to itself'
 
-    subs.add(id)
+    subscriptions.add(id)
     print(f'SUB: {id}')
     return b'OK'
 
 async def get_timeline(node: Server, id_self: str, id: str) -> ByteString:
-    global subs
+    global subscriptions
 
     if id == id_self:
         # TODO: maybe get timeline locally ?
         return b'Error: a peer cannot obtain its own timeline'
 
-    if id not in subs:
+    if id not in subscriptions:
         return b'Error: this peer is not subscribed to this id'
 
     print(f'Searching for timeline: {id}')
     return b'OK'
 
 posts = []
-subs = set()
+subscriptions = set()
+subscribers = set()
 
 def handle_requests(node: Server, args: Namespace):
     loop = asyncio.new_event_loop()
@@ -139,10 +140,8 @@ def main():
         log.addHandler(handler)
 
     loop = asyncio.get_event_loop()
-    node = Server()
+    node = Server(node_id=digest(args.id))
     loop.run_until_complete(node.listen(args.port))
-
-    atexit.register(cleanup, node)
 
     if args.peers:
         # Start the bootstrapping process (providing addresses for more nodes in
