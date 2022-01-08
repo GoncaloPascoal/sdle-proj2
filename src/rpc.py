@@ -1,18 +1,25 @@
 
-import zmq
+import asyncio, json
 from argparse import ArgumentParser
 from utils import alnum
 
-def send_command(ip: str, port: int, args: dict):
-    context = zmq.Context()
-    sock = context.socket(zmq.REQ)
-    sock.connect(f'tcp://{ip}:{port}')
+async def send_command(ip: str, port: int, args: dict):
+    try:
+        reader, writer = await asyncio.open_connection(ip, port)
+    except ConnectionRefusedError:
+        print(f'Couldn\'t send command - {ip}:{port} is offline')
+        return
 
-    sock.send_json(args)
-    print(sock.recv_string())
+    data = json.dumps(args).encode()
+    writer.write(data)
+    writer.write_eof()
+    await writer.drain()
 
-    sock.close()
-    context.destroy()
+    response = (await reader.read()).decode('utf-8')
+    print(response)
+
+    writer.close()
+    await writer.wait_closed()
 
 def main():
     parser = ArgumentParser(description='Program that performs RPC on nodes '
@@ -46,7 +53,8 @@ def main():
     for k in set(vars(args).keys()).difference(['ip', 'port']):
         method_args[k] = getattr(args, k)
 
-    send_command(args.ip, args.port, method_args)
+    loop = asyncio.get_event_loop()
+    loop.run_until_complete(send_command(args.ip, args.port, method_args))
 
 if __name__ == '__main__':
     main()

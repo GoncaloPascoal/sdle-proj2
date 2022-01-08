@@ -1,10 +1,11 @@
 
-import asyncio, json, logging, time, zmq
+import asyncio, json, logging, time
 
 from argparse import ArgumentParser, ArgumentTypeError, Namespace, RawDescriptionHelpFormatter
+from asyncio.streams import StreamReader, StreamWriter
 from datetime import datetime
 from threading import Thread
-from typing import ByteString, Tuple
+from typing import ByteString, Dict, Set, Tuple
 from utils import alnum
 
 from kademlia.network import Server
@@ -22,6 +23,9 @@ class Post:
     def __repr__(self) -> str:
         dt = datetime.fromtimestamp(self.timestamp / 1e9)
         return f'({self.id} - {dt} - {self.message})'
+
+    def __eq__(self, o: object) -> bool:
+        return isinstance(o, Post) and self.id == o.id
 
 def parse_address(addr: str) -> Tuple[str, int]:
     parts = addr.split(':')
@@ -41,88 +45,15 @@ def parse_address(addr: str) -> Tuple[str, int]:
 
     return ip, port
 
-async def post(message: str) -> ByteString:
-    global posts
-
-    print(f'POST: {message}')
-    posts.append(Post(message))
-    return b'OK'
-
-async def subscribe(context: zmq.Context, node: Server, id_self: str, id: str) -> ByteString:
-    global subscriptions
-
-    if id == id_self:
-        return b'Error: a peer cannot subscribe to itself'
-
-    info = await node.get(id)
-    if info:
-        info = json.loads(info)
-        port = info['port']
-
-        sock = context.socket(zmq.REQ)
-        sock.connect(f'tcp://127.0.0.1:{port}') # TODO: IP
-
-        sock.send_json({
-            'method': 'SUB_NODE',
-            'id': id_self,
-        })
-
-        res = sock.recv_string()
-        if res == 'OK':
-            print(f'SUB: {id}')
-            subscriptions.add(id)
-
-        return res.encode()
-
-    return b'Error: subscription process failed'
-
-async def subscribe_node(node: Server, args: Namespace, id: str) -> ByteString:
+def gen_kademlia_info(port: int) -> str:
     global subscribers
-    
-    if id in subscribers:
-        return b'Error: this node is already subscribed'
 
-    subscribers.add(id)
-    await update_kademlia_info(node, args)
+    info = {
+        'port': port,
+        'subscribers': list(subscribers),
+    }
 
-    print(f'SUB_NODE: {id}')
-    return b'OK'
-
-async def get(context: zmq.Context, node: Server, id_self: str, id: str) -> ByteString:
-    global subscriptions
-
-    if id == id_self:
-        # TODO: maybe get timeline locally ?
-        return b'Error: a peer cannot obtain its own timeline'
-
-    if id not in subscriptions:
-        return b'Error: this peer is not subscribed to this id'
-
-    info = await node.get(id)
-    if info:
-        info = json.loads(info)
-        port = info['port']
-
-        sock = context.socket(zmq.REQ) # TODO: Abort if connection fails
-        sock.connect(f'tcp://127.0.0.1:{port}') # TODO: IP
-
-        sock.send_json({
-            'method': 'GET_NODE',
-        })
-
-        res = json.loads(sock.recv_string())
-        print(res)
-
-        return b'OK'
-
-    print(f'Searching for timeline: {id}')
-    return b'OK'
-
-async def get_node() -> ByteString:
-    global posts
-
-    posts_str = list(map(str, posts))
-    return json.dumps(posts_str).encode()
+    return json.dumps(info)
 
 async def update_kademlia_info(node: Server, args: Namespace):
     global subscribers
@@ -134,61 +65,161 @@ async def update_kademlia_info(node: Server, args: Namespace):
     print('Updated Kademlia information')
 
 posts = []
-subscriptions = set()
+subscriptions: Dict[str, Set] = {}
 subscribers = set()
 
-def handle_requests(node: Server, args: Namespace):
-    loop = asyncio.new_event_loop()
+class ServerThread(Thread):
+    def __init__(self, node: Server, args: Namespace):
+        Thread.__init__(self)
 
-    context = zmq.Context()
-    sock = context.socket(zmq.ROUTER)
-    sock.bind(f'tcp://*:{args.rpc_port}')
+        self.node = node
+        self.args = args
 
-    rpc_commands = {
-        'POST': post,
-        'SUB': subscribe,
-        'SUB_NODE': subscribe_node,
-        'GET': get,
-        'GET_NODE': get_node,
-    }
+        self.rpc_commands = {
+            'POST': self.post,
+            'SUB': self.subscribe,
+            'SUB_NODE': self.subscribe_node,
+            'GET': self.get,
+            'GET_NODE': self.get_node,
+        }
 
-    rpc_args = {
-        'POST': [],
-        'SUB': [('context', context), ('node', node), ('id_self', args.id)],
-        'SUB_NODE': [('node', node), ('args', args)],
-        'GET': [('context', context), ('node', node), ('id_self', args.id)],
-        'GET_NODE': [],
-    }
+    async def post(self, message: str) -> ByteString:
+        global posts
 
-    print(f'Node {args.id} online...')
+        print(f'POST: {message}')
+        posts.append(Post(message))
+        return b'OK'
 
-    while True:
-        parts = sock.recv_multipart()
-        command = json.loads(parts[2].decode('utf-8'))
+    async def subscribe(self, id: str) -> ByteString:
+        global subscriptions
+
+        if id == self.args.id:
+            return b'Error: a peer cannot subscribe to itself'
+        
+        if id in subscriptions:
+            return f'Error: you are alread subscribed to {id}'.encode()
+
+        info = await self.node.get(id)
+        if info:
+            info = json.loads(info)
+            port = info['port']
+
+            try:
+                reader, writer = await asyncio.open_connection(
+                    '127.0.0.1',
+                    port
+                ) # TODO: IP
+            except ConnectionRefusedError:
+                return b'Source is offline, cannot subscribe'
+
+            data = json.dumps({
+                'method': 'SUB_NODE',
+                'id': self.args.id,
+            }).encode()
+            writer.write(data)
+            writer.write_eof()
+            await writer.drain()
+
+            response = await reader.read()
+            if response == b'OK':
+                print(f'SUB: {id}')
+                subscriptions[id] = set()
+            
+            writer.close()
+            await writer.wait_closed()
+
+            return response
+
+        return b'Error: subscription process failed'
+
+    async def subscribe_node(self, id: str) -> ByteString:
+        global subscribers
+
+        if id in subscribers:
+            return b'Error: this node is already subscribed'
+
+        subscribers.add(id)
+        await update_kademlia_info(self.node, self.args)
+
+        print(f'SUB_NODE: {id}')
+        return b'OK'
+
+    async def get(self, id: str) -> ByteString:
+        global subscriptions
+
+        if id == self.args.id:
+            # TODO: maybe get timeline locally ?
+            return b'Error: a peer cannot obtain its own timeline'
+
+        if id not in subscriptions:
+            return b'Error: this peer is not subscribed to this id'
+
+        info = await self.node.get(id)
+        if info:
+            info = json.loads(info)
+            port = info['port']
+
+            try:
+                reader, writer = await asyncio.open_connection(
+                    '127.0.0.1',
+                    port,
+                ) # TODO: IP
+
+                data = json.dumps({
+                    'method': 'GET_NODE'
+                }).encode()
+
+                writer.write(data)
+                writer.write_eof()
+                await writer.drain()
+
+                res = json.loads((await reader.read()).decode('utf-8'))
+                subscriptions[id] = subscriptions[id].union(res)
+                print(subscriptions[id])
+
+                return b'OK'
+            except ConnectionRefusedError:
+                # TODO: Ask subscribers for timeline if connection fails
+                return b'Error: timeline source not available'
+
+        return b'Error: information about source node is not available'
+
+    async def get_node(self) -> ByteString:
+        global posts
+
+        posts_str = list(map(str, posts))
+        return json.dumps(posts_str).encode()
+
+    async def handle_request(self, reader: StreamReader, writer: StreamWriter):
+        req = (await reader.read()).decode('utf-8')
+        command = json.loads(req)
 
         if isinstance(command, dict) and 'method' in command \
-                and command['method'] in rpc_commands:
-            func = rpc_commands[command['method']]
-
-            for name, value in rpc_args[command['method']]:
-                command[name] = value
-
+                and command['method'] in self.rpc_commands:
+            func = self.rpc_commands[command['method']]
             del command['method']
-            parts[2] = loop.run_until_complete(func(**command))
+            response = await func(**command)
         else:
-            parts[2] = b'Error: malformed command'
+            response = b'Error: malformed command'
 
-        sock.send_multipart(parts)
+        writer.write(response)
+        writer.write_eof()
+        await writer.drain()
 
-def gen_kademlia_info(port: int) -> str:
-    global subscribers
+        writer.close()
+        await writer.wait_closed()
 
-    info = {
-        'port': port,
-        'subscribers': list(subscribers),
-    }
+    async def start_server(self):
+        self.server = await asyncio.start_server(
+            self.handle_request,
+            '127.0.0.1',
+            self.args.rpc_port
+        )
+        await self.server.serve_forever()
 
-    return json.dumps(info)
+    def run(self):
+        loop = asyncio.new_event_loop()
+        loop.run_until_complete(self.start_server())
 
 def main():
     parser = ArgumentParser(description='Node that is part of a decentralized '
@@ -234,7 +265,7 @@ def main():
 
     loop.run_until_complete(update_kademlia_info(node, args))
 
-    server_thread = Thread(target=handle_requests, args=(node, args))
+    server_thread = ServerThread(node, args)
     server_thread.start()
 
     loop.run_forever()
