@@ -8,17 +8,31 @@ from threading import Thread
 from typing import ByteString, Dict, Set, Tuple
 from utils import alnum
 
+from sortedcontainers import SortedSet
+
 from kademlia.network import Server
 from kademlia.utils import digest
 
 class Post:
     counter = 0
 
-    def __init__(self, message: str):
-        self.id = Post.counter
-        Post.counter += 1
-        self.timestamp = time.time_ns()
+    def __init__(self, message: str, id: int = None, timestamp: int = None):
+        if id != None:
+            self.id = id
+        else:
+            self.id = Post.counter
+            Post.counter += 1
+
+        if timestamp != None:
+            self.timestamp = timestamp
+        else:
+            self.timestamp = time.time_ns()
+
         self.message = message
+
+    @classmethod
+    def from_dict(cls, d: dict):
+        return cls(d['message'], d['id'], d['timestamp'])
 
     def __repr__(self) -> str:
         dt = datetime.fromtimestamp(self.timestamp / 1e9)
@@ -115,6 +129,7 @@ class ServerThread(Thread):
             data = json.dumps({
                 'method': 'SUB_NODE',
                 'id': self.args.id,
+                'port': self.args.rpc_port,
             }).encode()
             writer.write(data)
             writer.write_eof()
@@ -123,7 +138,7 @@ class ServerThread(Thread):
             response = await reader.read()
             if response == b'OK':
                 print(f'SUB: {id}')
-                subscriptions[id] = set()
+                subscriptions[id] = SortedSet(key=lambda x: x.id)
             
             writer.close()
             await writer.wait_closed()
@@ -132,13 +147,13 @@ class ServerThread(Thread):
 
         return b'Error: subscription process failed'
 
-    async def subscribe_node(self, id: str) -> ByteString:
+    async def subscribe_node(self, id: str, port: int) -> ByteString:
         global subscribers
 
         if id in subscribers:
             return b'Error: this node is already subscribed'
 
-        subscribers.add(id)
+        subscribers.add({'id': id, 'port': port})
         await update_kademlia_info(self.node, self.args)
 
         print(f'SUB_NODE: {id}')
@@ -165,29 +180,62 @@ class ServerThread(Thread):
                     port,
                 ) # TODO: IP
 
-                data = json.dumps({
-                    'method': 'GET_NODE'
-                }).encode()
+                data = json.dumps({'method': 'GET_NODE'}).encode()
 
                 writer.write(data)
                 writer.write_eof()
                 await writer.drain()
 
                 res = json.loads((await reader.read()).decode('utf-8'))
+                res = map(Post.from_dict, res)
                 subscriptions[id] = subscriptions[id].union(res)
                 print(subscriptions[id])
 
                 return b'OK'
             except ConnectionRefusedError:
-                # TODO: Ask subscribers for timeline if connection fails
-                return b'Error: timeline source not available'
+                # Source is not available, contact subscribers
+                subscribers = info['subscribers']
+                sub_posts = SortedSet(key=lambda x: x['id'])
+
+                for subscriber in subscribers:
+                    try:
+                        reader, writer = await asyncio.open_connection(
+                            '127.0.0.1',
+                            subscriber['port'],
+                        ) # TODO: IP
+
+                        data = json.dumps({
+                            'method': 'GET_SUB',
+                            'id': id,
+                        }).encode()
+
+                        writer.write(data)
+                        writer.write_eof()
+                        await writer.drain()
+
+                        res = json.loads((await reader.read()).decode('utf-8'))
+                        if isinstance(res, list):
+                            sub_posts = sub_posts.union(res)
+                        else:
+                            print(res)
+                    except ConnectionRefusedError:
+                        pass
+
+                return json.dumps(list(sub_posts)).encode()
 
         return b'Error: information about source node is not available'
 
     async def get_node(self) -> ByteString:
         global posts
+        return json.dumps(list(map(lambda x: x.__dict__, posts))).encode()
+    
+    async def get_sub(self, id: str) -> ByteString:
+        global subscriptions
 
-        posts_str = list(map(str, posts))
+        if id not in subscriptions:
+            return b'Error: not subscribed to this node'
+
+        posts_str = list(map(lambda x: x.__dict__, subscriptions[id]))
         return json.dumps(posts_str).encode()
 
     async def handle_request(self, reader: StreamReader, writer: StreamWriter):
