@@ -36,13 +36,37 @@ class Post:
 
     def __repr__(self) -> str:
         dt = datetime.fromtimestamp(self.timestamp / 1e9)
-        return f'({self.id} - {dt} - {self.message})'
+        return f'({self.id} - {dt} - \'{self.message}\')'
 
     def __eq__(self, o: object) -> bool:
         return isinstance(o, Post) and self.id == o.id
 
+    def __lt__(self, o: object) -> bool:
+        return isinstance(o, Post) and self.id < o.id
+
     def __hash__(self) -> int:
         return hash(self.id)
+
+class SubscriptionInfo:
+    @classmethod
+    def key(post: Post):
+        return post.id
+
+    def __init__(self):
+        self.posts = SortedSet()
+        self.last_post = None
+
+    def add_new_posts(self, new):
+        self.posts = self.posts.union(new)
+        
+        if self.posts:
+            if self.last_post == None:
+                self.last_post = self.posts[-1].id
+            else:
+                self.last_post = max(self.last_post, self.posts[-1].id)
+    
+    def __repr__(self) -> str:
+        return f'Last: {self.last_post}\nPosts: {self.posts}'
 
 def parse_address(addr: str) -> Tuple[str, int]:
     parts = addr.split(':')
@@ -82,7 +106,7 @@ async def update_kademlia_info(node: Server, args: Namespace):
     print('Updated Kademlia information')
 
 posts = []
-subscriptions: Dict[str, dict] = {}
+subscriptions: Dict[str, SubscriptionInfo] = {}
 subscribers = {}
 
 class Listener:
@@ -141,10 +165,8 @@ class Listener:
             response = await reader.read()
             if response == b'OK':
                 print(f'SUB: {id}')
-                subscriptions[id] = {}
-                subscriptions[id]['last_post'] = None
-                subscriptions[id]['posts'] = SortedSet(key=lambda x: x.id)
-            
+                subscriptions[id] = SubscriptionInfo()
+
             writer.close()
             await writer.wait_closed()
 
@@ -198,7 +220,7 @@ class Listener:
             if response == b'OK':
                 print(f'UNSUB: {id}')
                 subscriptions.pop(id, None)
-            
+
             writer.close()
             await writer.wait_closed()
 
@@ -252,15 +274,7 @@ class Listener:
                 res = json.loads((await reader.read()).decode('utf-8'))
                 res = map(Post.from_dict, res)
 
-                subscriptions[id]['posts'] = subscriptions[id]['posts'].union(res)
-                if subscriptions[id]['posts']:
-                    if subscriptions[id]['last_post'] == None:
-                        subscriptions[id]['last_post'] = subscriptions[id]['posts'][-1].id
-                    else:
-                        subscriptions[id]['last_post'] = max(
-                            subscriptions[id]['last_post'],
-                            subscriptions[id]['posts'][-1].id
-                        )
+                subscriptions[id].add_new_posts(res)
                 print(subscriptions[id])
 
                 return b'OK'
@@ -294,15 +308,7 @@ class Listener:
                     except ConnectionRefusedError:
                         pass
 
-                subscriptions[id]['posts'] = subscriptions[id]['posts'].union(sub_posts)
-                if subscriptions[id]['posts']:
-                    if subscriptions[id]['last_post'] == None:
-                        subscriptions[id]['last_post'] = subscriptions[id]['posts'][-1].id
-                    else:
-                        subscriptions[id]['last_post'] = max(
-                            subscriptions[id]['last_post'],
-                            subscriptions[id]['posts'][-1].id
-                        )
+                subscriptions[id].add_new_posts(sub_posts)
                 print(subscriptions[id])
 
                 return b'OK'
