@@ -5,7 +5,7 @@ from argparse import ArgumentParser, ArgumentTypeError, Namespace, RawDescriptio
 from asyncio.streams import StreamReader, StreamWriter
 from datetime import datetime
 from threading import Thread
-from typing import ByteString, Dict, Set, Tuple
+from typing import ByteString, Dict, Tuple
 from utils import alnum
 
 from sortedcontainers import SortedSet
@@ -79,7 +79,7 @@ async def update_kademlia_info(node: Server, args: Namespace):
     print('Updated Kademlia information')
 
 posts = []
-subscriptions: Dict[str, Set] = {}
+subscriptions: Dict[str, dict] = {}
 subscribers = set()
 
 class ServerThread(Thread):
@@ -138,7 +138,8 @@ class ServerThread(Thread):
             response = await reader.read()
             if response == b'OK':
                 print(f'SUB: {id}')
-                subscriptions[id] = SortedSet(key=lambda x: x.id)
+                subscriptions[id]['last_post'] = None
+                subscriptions[id]['posts'] = SortedSet(key=lambda x: x.id)
             
             writer.close()
             await writer.wait_closed()
@@ -159,7 +160,7 @@ class ServerThread(Thread):
         print(f'SUB_NODE: {id}')
         return b'OK'
 
-    async def get(self, id: str) -> ByteString:
+    async def get(self, id: str, new: bool) -> ByteString:
         global subscriptions
 
         if id == self.args.id:
@@ -169,6 +170,7 @@ class ServerThread(Thread):
         if id not in subscriptions:
             return b'Error: this peer is not subscribed to this id'
 
+        last_post = subscriptions[id]['last_post'] if new else None 
         info = await self.node.get(id)
         if info:
             info = json.loads(info)
@@ -180,7 +182,10 @@ class ServerThread(Thread):
                     port,
                 ) # TODO: IP
 
-                data = json.dumps({'method': 'GET_NODE'}).encode()
+                data = json.dumps({
+                    'method': 'GET_NODE',
+                    'last_post': last_post
+                }).encode()
 
                 writer.write(data)
                 writer.write_eof()
@@ -188,7 +193,13 @@ class ServerThread(Thread):
 
                 res = json.loads((await reader.read()).decode('utf-8'))
                 res = map(Post.from_dict, res)
-                subscriptions[id] = subscriptions[id].union(res)
+
+                subscriptions[id]['posts'] = subscriptions[id]['posts'].union(res)
+                if subscriptions[id]['posts']:
+                    subscriptions[id]['last_post'] = max(
+                        subscriptions[id]['last_post'],
+                        subscriptions[id]['posts'][-1].id
+                    )
                 print(subscriptions[id])
 
                 return b'OK'
@@ -207,6 +218,7 @@ class ServerThread(Thread):
                         data = json.dumps({
                             'method': 'GET_SUB',
                             'id': id,
+                            'last_post': last_post,
                         }).encode()
 
                         writer.write(data)
@@ -221,21 +233,35 @@ class ServerThread(Thread):
                     except ConnectionRefusedError:
                         pass
 
-                return json.dumps(list(sub_posts)).encode()
+                subscriptions[id]['posts'] = subscriptions[id]['posts'].union(sub_posts)
+                if subscriptions[id]['posts']:
+                    subscriptions[id]['last_post'] = max(
+                        subscriptions[id]['last_post'],
+                        subscriptions[id]['posts'][-1].id
+                    )
+                print(subscriptions[id])
+
+                return b'OK'
 
         return b'Error: information about source node is not available'
 
-    async def get_node(self) -> ByteString:
+    async def get_node(self, last_post: int) -> ByteString:
         global posts
-        return json.dumps(list(map(lambda x: x.__dict__, posts))).encode()
+
+        selected = posts if last_post == None else posts[last_post + 1:]
+        return json.dumps(list(map(lambda x: x.__dict__, selected))).encode()
     
-    async def get_sub(self, id: str) -> ByteString:
+    async def get_sub(self, id: str, last_post: int) -> ByteString:
         global subscriptions
 
         if id not in subscriptions:
             return b'Error: not subscribed to this node'
 
-        posts_str = list(map(lambda x: x.__dict__, subscriptions[id]))
+        selected = subscriptions[id]['posts']
+        if last_post != None:
+            selected = selected[selected.bisect_right(last_post):]
+
+        posts_str = list(map(lambda x: x.__dict__, selected))
         return json.dumps(posts_str).encode()
 
     async def handle_request(self, reader: StreamReader, writer: StreamWriter):

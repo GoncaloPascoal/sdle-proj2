@@ -44,8 +44,11 @@ def main():
     parser_post.add_argument('message', help='message to post')
     parser_sub.add_argument('id', help='identifier of the node to subscribe to',
         type=alnum)
-    parser_get.add_argument('id', help='identifier of the node from which we want to see the timeline',
+    
+    parser_get.add_argument('id', help='node identifier',
         type=alnum)
+    parser_get.add_argument('-n', '--new', help='only ask for new posts',
+        action='store_true')
 
     args = parser.parse_args()
 
