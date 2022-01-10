@@ -80,12 +80,10 @@ async def update_kademlia_info(node: Server, args: Namespace):
 
 posts = []
 subscriptions: Dict[str, dict] = {}
-subscribers = set()
+subscribers = {}
 
-class ServerThread(Thread):
+class Listener:
     def __init__(self, node: Server, args: Namespace):
-        Thread.__init__(self)
-
         self.node = node
         self.args = args
 
@@ -138,6 +136,7 @@ class ServerThread(Thread):
             response = await reader.read()
             if response == b'OK':
                 print(f'SUB: {id}')
+                subscriptions[id] = {}
                 subscriptions[id]['last_post'] = None
                 subscriptions[id]['posts'] = SortedSet(key=lambda x: x.id)
             
@@ -154,7 +153,7 @@ class ServerThread(Thread):
         if id in subscribers:
             return b'Error: this node is already subscribed'
 
-        subscribers.add({'id': id, 'port': port})
+        subscribers[id] = port
         await update_kademlia_info(self.node, self.args)
 
         print(f'SUB_NODE: {id}')
@@ -283,17 +282,13 @@ class ServerThread(Thread):
         writer.close()
         await writer.wait_closed()
 
-    async def start_server(self):
+    async def start_listening(self):
         self.server = await asyncio.start_server(
             self.handle_request,
             '127.0.0.1',
             self.args.rpc_port
         )
         await self.server.serve_forever()
-
-    def run(self):
-        loop = asyncio.new_event_loop()
-        loop.run_until_complete(self.start_server())
 
 def main():
     parser = ArgumentParser(description='Node that is part of a decentralized '
@@ -326,7 +321,7 @@ def main():
 
     loop = asyncio.get_event_loop()
     node = Server(node_id=digest(args.id))
-    loop.run_until_complete(node.listen(args.port))
+    loop.run_until_complete(node.listen(args.port, interface='127.0.0.1'))
 
     if args.peers:
         # Start the bootstrapping process (providing addresses for more nodes in
@@ -339,10 +334,15 @@ def main():
 
     loop.run_until_complete(update_kademlia_info(node, args))
 
-    server_thread = ServerThread(node, args)
-    server_thread.start()
+    listener = Listener(node, args)
+    loop.create_task(listener.start_listening())
 
-    loop.run_forever()
+    try:
+        loop.run_forever()
+    except KeyboardInterrupt:
+        pass
+    finally:
+        node.stop()
 
 if __name__ == '__main__':
     main()
