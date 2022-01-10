@@ -32,21 +32,22 @@ def main():
         required=True,
     )
 
-    parser_post = subparsers.add_parser('POST', help='post a message to a node\'s timeline')
-    parser_sub  = subparsers.add_parser('SUB' , help='subscribe to a node with a specific id')
-    parser_get  = subparsers.add_parser('GET' , help='get a node\'s timeline')
+    parser_post  = subparsers.add_parser('POST', help='post a message to a node\'s timeline')
+    parser_sub   = subparsers.add_parser('SUB' , help='subscribe to a node with a specific id')
+    parser_unsub = subparsers.add_parser('UNSUB', help='unsubscribe from a node with a specific id')
+    parser_get   = subparsers.add_parser('GET' , help='get a node\'s timeline')
 
-    for subparser in [parser_post, parser_sub, parser_get]:
+    for subparser in [parser_post, parser_sub, parser_unsub, parser_get]:
         subparser.add_argument('port', help='port of target node', type=int)
         subparser.add_argument('--ip', help='ip of target node (defaults to localhost)',
             default='127.0.0.1', metavar='ADDR')
     
     parser_post.add_argument('message', help='message to post')
-    parser_sub.add_argument('id', help='identifier of the node to subscribe to',
-        type=alnum)
-    
-    parser_get.add_argument('id', help='node identifier',
-        type=alnum)
+
+    for subparser in [parser_sub, parser_unsub, parser_get]:
+        subparser.add_argument('id', help='node identifier',
+            type=alnum)
+
     parser_get.add_argument('-n', '--new', help='only ask for new posts',
         action='store_true')
 

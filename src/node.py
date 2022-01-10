@@ -41,6 +41,9 @@ class Post:
     def __eq__(self, o: object) -> bool:
         return isinstance(o, Post) and self.id == o.id
 
+    def __hash__(self) -> int:
+        return hash(self.id)
+
 def parse_address(addr: str) -> Tuple[str, int]:
     parts = addr.split(':')
 
@@ -91,6 +94,8 @@ class Listener:
             'POST': self.post,
             'SUB': self.subscribe,
             'SUB_NODE': self.subscribe_node,
+            'UNSUB': self.unsubscribe,
+            'UNSUB_NODE': self.unsubscribe_node,
             'GET': self.get,
             'GET_NODE': self.get_node,
         }
@@ -159,6 +164,60 @@ class Listener:
         print(f'SUB_NODE: {id}')
         return b'OK'
 
+    async def unsubscribe(self, id: str) -> ByteString:
+        global subscriptions
+
+        if id == self.args.id:
+            return b'Error: a peer cannot subscribe to itself'
+
+        if id not in subscriptions:
+            return f'Error: you are not subscribed to {id}'.encode()
+
+        info = await self.node.get(id)
+        if info:
+            info = json.loads(info)
+            port = info['port']
+
+            try:
+                reader, writer = await asyncio.open_connection(
+                    '127.0.0.1',
+                    port
+                ) # TODO: IP
+            except ConnectionRefusedError:
+                return b'Source is offline, cannot subscribe'
+
+            data = json.dumps({
+                'method': 'UNSUB_NODE',
+                'id': self.args.id,
+            }).encode()
+            writer.write(data)
+            writer.write_eof()
+            await writer.drain()
+
+            response = await reader.read()
+            if response == b'OK':
+                print(f'UNSUB: {id}')
+                subscriptions.pop(id, None)
+            
+            writer.close()
+            await writer.wait_closed()
+
+            return response
+
+        return b'Error: unsubscription process failed'
+
+    async def unsubscribe_node(self, id: str) -> ByteString:
+        global subscribers
+
+        if id not in subscribers:
+            return b'Error: this node is not subscribed'
+        
+        subscribers.pop(id, None)
+        await update_kademlia_info(self.node, self.args)
+
+        print(f'UNSUB_NODE: {id}')
+        return b'OK'
+
     async def get(self, id: str, new: bool) -> ByteString:
         global subscriptions
 
@@ -195,10 +254,13 @@ class Listener:
 
                 subscriptions[id]['posts'] = subscriptions[id]['posts'].union(res)
                 if subscriptions[id]['posts']:
-                    subscriptions[id]['last_post'] = max(
-                        subscriptions[id]['last_post'],
-                        subscriptions[id]['posts'][-1].id
-                    )
+                    if subscriptions[id]['last_post'] == None:
+                        subscriptions[id]['last_post'] = subscriptions[id]['posts'][-1].id
+                    else:
+                        subscriptions[id]['last_post'] = max(
+                            subscriptions[id]['last_post'],
+                            subscriptions[id]['posts'][-1].id
+                        )
                 print(subscriptions[id])
 
                 return b'OK'
@@ -234,10 +296,13 @@ class Listener:
 
                 subscriptions[id]['posts'] = subscriptions[id]['posts'].union(sub_posts)
                 if subscriptions[id]['posts']:
-                    subscriptions[id]['last_post'] = max(
-                        subscriptions[id]['last_post'],
-                        subscriptions[id]['posts'][-1].id
-                    )
+                    if subscriptions[id]['last_post'] == None:
+                        subscriptions[id]['last_post'] = subscriptions[id]['posts'][-1].id
+                    else:
+                        subscriptions[id]['last_post'] = max(
+                            subscriptions[id]['last_post'],
+                            subscriptions[id]['posts'][-1].id
+                        )
                 print(subscriptions[id])
 
                 return b'OK'
