@@ -91,7 +91,7 @@ def gen_kademlia_info(port: int) -> str:
 
     info = {
         'port': port,
-        'subscribers': list(subscribers),
+        'subscribers': subscribers,
     }
 
     return json.dumps(info)
@@ -280,14 +280,17 @@ class Listener:
                 return b'OK'
             except ConnectionRefusedError:
                 # Source is not available, contact subscribers
-                subscribers = info['subscribers']
+                subscribers: dict = info['subscribers']
                 sub_posts = SortedSet(key=lambda x: x['id'])
 
-                for subscriber in subscribers:
+                for port in subscribers.values():
+                    if port == self.args.rpc_port:
+                        continue
+
                     try:
                         reader, writer = await asyncio.open_connection(
                             '127.0.0.1',
-                            subscriber['port'],
+                            port,
                         ) # TODO: IP
 
                         data = json.dumps({
