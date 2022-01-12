@@ -1,11 +1,11 @@
 
-import asyncio, json, logging, time
+import aiofiles, asyncio, json, logging, os, pickle, time
 
 from argparse import ArgumentParser, ArgumentTypeError, Namespace, RawDescriptionHelpFormatter
 from asyncio.streams import StreamReader, StreamWriter
 from asyncio import Lock
 from datetime import datetime, timedelta
-from typing import ByteString, Dict, Iterable, Tuple
+from typing import ByteString, Dict, Iterable, List, Tuple
 from utils import alnum
 
 from sortedcontainers import SortedSet
@@ -78,6 +78,21 @@ class SubscriptionInfo:
         posts = '\n'.join(['\t' + str(post) for post in self.posts])
         return f'Last: {self.last_post}\nPosts: {posts}'
 
+    def __getstate__(self) -> Tuple:
+        return self.posts, self.last_post
+
+    def __setstate__(self, state: Tuple):
+        self.posts, self.last_post = state
+        self.lock = Lock()
+
+class State:
+    def __init__(self):
+        self.posts: List[Post] = []
+        self.subscriptions: Dict[str, SubscriptionInfo] = {}
+        self.subscribers: Dict[str, int] = {}
+
+state = State()
+
 def parse_address(addr: str) -> Tuple[str, int]:
     parts = addr.split(':')
 
@@ -97,27 +112,21 @@ def parse_address(addr: str) -> Tuple[str, int]:
     return ip, port
 
 def gen_kademlia_info(port: int) -> str:
-    global subscribers
+    global state
 
     info = {
         'port': port,
-        'subscribers': subscribers,
+        'subscribers': state.subscribers,
     }
 
     return json.dumps(info)
 
 async def update_kademlia_info(node: Server, args: Namespace):
-    global subscribers
-
     info = gen_kademlia_info(args.rpc_port)
     await node.set(args.id, info)
     node.storage[digest(args.id)] = info
 
     print('Updated Kademlia information')
-
-posts = []
-subscriptions: Dict[str, SubscriptionInfo] = {}
-subscribers = {}
 
 class Listener:
     def __init__(self, node: Server, args: Namespace):
@@ -136,19 +145,19 @@ class Listener:
         }
 
     async def post(self, message: str) -> ByteString:
-        global posts
+        global state
 
         print(f'POST: {message}')
-        posts.append(Post(message))
+        state.posts.append(Post(message))
         return b'OK'
 
     async def subscribe(self, id: str) -> ByteString:
-        global subscriptions
+        global state
 
         if id == self.args.id:
             return b'Error: a peer cannot subscribe to itself'
         
-        if id in subscriptions:
+        if id in state.subscriptions:
             return f'Error: you are alread subscribed to {id}'.encode()
 
         info = await self.node.get(id)
@@ -176,7 +185,7 @@ class Listener:
             response = await reader.read()
             if response == b'OK':
                 print(f'SUB: {id}')
-                subscriptions[id] = SubscriptionInfo()
+                state.subscriptions[id] = SubscriptionInfo()
 
             writer.close()
             await writer.wait_closed()
@@ -186,24 +195,24 @@ class Listener:
         return b'Error: subscription process failed'
 
     async def subscribe_node(self, id: str, port: int) -> ByteString:
-        global subscribers
+        global state
 
-        if id in subscribers:
+        if id in state.subscribers:
             return b'Error: this node is already subscribed'
 
-        subscribers[id] = port
+        state.subscribers[id] = port
         await update_kademlia_info(self.node, self.args)
 
         print(f'SUB_NODE: {id}')
         return b'OK'
 
     async def unsubscribe(self, id: str) -> ByteString:
-        global subscriptions
+        global state
 
         if id == self.args.id:
             return b'Error: a peer cannot subscribe to itself'
 
-        if id not in subscriptions:
+        if id not in state.subscriptions:
             return f'Error: you are not subscribed to {id}'.encode()
 
         info = await self.node.get(id)
@@ -230,7 +239,7 @@ class Listener:
             response = await reader.read()
             if response == b'OK':
                 print(f'UNSUB: {id}')
-                subscriptions.pop(id, None)
+                state.subscriptions.pop(id, None)
 
             writer.close()
             await writer.wait_closed()
@@ -240,28 +249,28 @@ class Listener:
         return b'Error: unsubscription process failed'
 
     async def unsubscribe_node(self, id: str) -> ByteString:
-        global subscribers
+        global state
 
-        if id not in subscribers:
+        if id not in state.subscribers:
             return b'Error: this node is not subscribed'
         
-        subscribers.pop(id, None)
+        state.subscribers.pop(id, None)
         await update_kademlia_info(self.node, self.args)
 
         print(f'UNSUB_NODE: {id}')
         return b'OK'
 
     async def get(self, id: str, new: bool) -> ByteString:
-        global subscriptions
+        global state
 
         if id == self.args.id:
             # TODO: maybe get timeline locally ?
             return b'Error: a peer cannot obtain its own timeline'
 
-        if id not in subscriptions:
+        if id not in state.subscriptions:
             return b'Error: this peer is not subscribed to this id'
 
-        last_post = subscriptions[id].last_post if new else None 
+        last_post = state.subscriptions[id].last_post if new else None 
         info = await self.node.get(id)
         if info:
             info = json.loads(info)
@@ -285,8 +294,8 @@ class Listener:
                 res = json.loads((await reader.read()).decode('utf-8'))
                 res = map(Post.from_dict, res)
 
-                subscriptions[id].add_new_posts(res)
-                print(subscriptions[id])
+                state.subscriptions[id].add_new_posts(res)
+                print(state.subscriptions[id])
 
                 return b'OK'
             except ConnectionRefusedError:
@@ -323,26 +332,26 @@ class Listener:
                     except ConnectionRefusedError:
                         pass
 
-                subscriptions[id].add_new_posts(sub_posts)
-                print(subscriptions[id])
+                state.subscriptions[id].add_new_posts(sub_posts)
+                print(state.subscriptions[id])
 
                 return b'OK'
 
         return b'Error: information about source node is not available'
 
     async def get_node(self, last_post: int) -> ByteString:
-        global posts
+        global state
 
-        selected = posts if last_post == None else posts[last_post + 1:]
+        selected = state.posts if last_post == None else state.posts[last_post + 1:]
         return json.dumps(list(map(lambda x: x.__dict__, selected))).encode()
 
     async def get_subscriber(self, id: str, last_post: int) -> ByteString:
-        global subscriptions
+        global state
 
-        if id not in subscriptions:
+        if id not in state.subscriptions:
             return b'Error: not subscribed to this node'
 
-        selected = subscriptions[id].posts
+        selected = state.subscriptions[id].posts
         if last_post != None:
             dummy_post = Post(None, id=last_post)
             selected = selected[selected.bisect_right(dummy_post):]
@@ -378,17 +387,34 @@ class Listener:
         await self.server.serve_forever()
 
 async def discard_posts_periodically():
-    global subscriptions
+    global state
 
     while True:
         await asyncio.sleep(60) # Sleep for 1 minute
-        for id, s in subscriptions.items():
+        for id, s in state.subscriptions.items():
             async with s.lock:
                 n = s.discard_old_posts()
             if n:
                 print(f'Discarded {n} posts from {id}')
 
+async def save_kademlia_state_periodically(node: Server, id: str, frequency=300):
+    while True:
+        node.save_state(f'{id}.kd')
+        async with aiofiles.open(f'{id}.kds', 'wb') as f:
+            await f.write(pickle.dumps(node.storage))
+        await asyncio.sleep(frequency)
+
+async def save_local_state_periodically(frequency=30):
+    global state
+
+    while True:
+        async with aiofiles.open(f'{id}.obj', 'wb') as f:
+            await f.write(pickle.dumps(state))
+        await asyncio.sleep(frequency)
+
 def main():
+    global state
+
     parser = ArgumentParser(description='Node that is part of a decentralized '
         'timeline newtwork.\nIt publishes small text messages (posts) to its '
         'timeline and can locate other nodes using a DHT algorithm and '
@@ -421,20 +447,41 @@ def main():
         log.setLevel(logging.DEBUG)
         log.addHandler(handler)
 
+    state_path = f'{args.id}.obj'
+    if os.path.exists(state_path):
+        with open(state_path, 'rb') as f:
+            state = pickle.load(f)
+
+    kademlia_storage_path = f'{args.id}.kds'
+    storage = None
+    if os.path.exists(kademlia_storage_path):
+        with open(kademlia_storage_path, 'rb') as f:
+            storage = pickle.load(f)
+
     loop = asyncio.get_event_loop()
-    node = Server(node_id=digest(args.id))
-    loop.run_until_complete(node.listen(args.port, interface='127.0.0.1'))
+    kademlia_path = f'{args.id}.kd'
 
-    if args.peers:
-        # Start the bootstrapping process (providing addresses for more nodes in
-        # the command line arguments gives more fault tolerance)
-        loop.run_until_complete(node.bootstrap(args.peers))
-
-        print('Bootstrap process finished...')
+    if os.path.exists(kademlia_path):
+        node = loop.run_until_complete(Server.load_state(kademlia_path, args.port, interface='127.0.0.1'))
     else:
-        print('Starting a new Kademlia network...')
+        node = Server(node_id=digest(args.id), storage=storage)
+        loop.run_until_complete(node.listen(args.port, interface='127.0.0.1'))
+
+        if args.peers:
+            # Start the bootstrapping process (providing addresses for more nodes in
+            # the command line arguments gives more fault tolerance)
+            loop.run_until_complete(node.bootstrap(args.peers))
+
+            print('Bootstrap process finished...')
+        else:
+            print('Starting a new Kademlia network...')
 
     loop.run_until_complete(update_kademlia_info(node, args))
+
+    # Save Kademlia state every 5 minutes
+    loop.create_task(save_kademlia_state_periodically(node, args.id))
+    # Save local state every minute
+    loop.create_task(save_local_state_periodically())
 
     listener = Listener(node, args)
     loop.create_task(listener.start_listening())
