@@ -65,7 +65,8 @@ class SubscriptionInfo:
                 self.last_post = max(self.last_post, self.posts[-1].id)
     
     def __repr__(self) -> str:
-        return f'Last: {self.last_post}\nPosts: {self.posts}'
+        posts = '\n'.join(['\t' + str(post) for post in self.posts])
+        return f'Last: {self.last_post}\nPosts: {posts}'
 
 def parse_address(addr: str) -> Tuple[str, int]:
     parts = addr.split(':')
