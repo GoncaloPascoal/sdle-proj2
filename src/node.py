@@ -3,8 +3,9 @@ import asyncio, json, logging, time
 
 from argparse import ArgumentParser, ArgumentTypeError, Namespace, RawDescriptionHelpFormatter
 from asyncio.streams import StreamReader, StreamWriter
-from datetime import datetime
-from typing import ByteString, Dict, Tuple
+from asyncio import Lock
+from datetime import datetime, timedelta
+from typing import ByteString, Dict, Iterable, Tuple
 from utils import alnum
 
 from sortedcontainers import SortedSet
@@ -28,6 +29,7 @@ class Post:
             self.timestamp = time.time_ns()
 
         self.message = message
+        self.destroy_at = None
 
     @classmethod
     def from_dict(cls, d: dict):
@@ -47,23 +49,31 @@ class Post:
         return hash(self.id)
 
 class SubscriptionInfo:
-    @classmethod
-    def key(post: Post):
-        return post.id
+    ttl = 15 # Time to live in minutes
 
     def __init__(self):
         self.posts = SortedSet()
         self.last_post = None
+        self.lock = Lock()
 
-    def add_new_posts(self, new):
-        self.posts = self.posts.union(new)
+    def add_new_posts(self, new: Iterable):
+        for post in new:
+            post.destroy_at = datetime.now() + timedelta(minutes=SubscriptionInfo.ttl)
+
+        self.posts = self.posts.difference(new)
+        self.posts.update(new)
 
         if self.posts:
             if self.last_post == None:
                 self.last_post = self.posts[-1].id
             else:
                 self.last_post = max(self.last_post, self.posts[-1].id)
-    
+
+    def discard_old_posts(self) -> int:
+        old = [post for post in self.posts if post.destroy_at <= datetime.now()]
+        self.posts = self.posts.difference(old)
+        return len(old)
+
     def __repr__(self) -> str:
         posts = '\n'.join(['\t' + str(post) for post in self.posts])
         return f'Last: {self.last_post}\nPosts: {posts}'
@@ -367,6 +377,17 @@ class Listener:
         )
         await self.server.serve_forever()
 
+async def discard_posts_periodically():
+    global subscriptions
+
+    while True:
+        await asyncio.sleep(60) # Sleep for 1 minute
+        for id, s in subscriptions.items():
+            async with s.lock:
+                n = s.discard_old_posts()
+            if n:
+                print(f'Discarded {n} posts from {id}')
+
 def main():
     parser = ArgumentParser(description='Node that is part of a decentralized '
         'timeline newtwork.\nIt publishes small text messages (posts) to its '
@@ -385,8 +406,12 @@ def main():
         metavar='PEER', nargs='*', type=parse_address)
     parser.add_argument('-l', '--log', help='enable additional Kademlia logging',
         action='store_true')
+    parser.add_argument('--ttl', help='how many minutes to store posts for',
+        metavar='M', type=int, default=15)
 
     args = parser.parse_args()
+
+    SubscriptionInfo.ttl = args.ttl
 
     if args.log:
         handler = logging.StreamHandler()
@@ -413,6 +438,7 @@ def main():
 
     listener = Listener(node, args)
     loop.create_task(listener.start_listening())
+    loop.create_task(discard_posts_periodically())
 
     try:
         loop.run_forever()
