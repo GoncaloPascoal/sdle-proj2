@@ -1,0 +1,1 @@
+pip3 install kademlia sortedcontainers aiofiles
