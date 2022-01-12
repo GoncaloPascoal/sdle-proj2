@@ -250,7 +250,7 @@ class Listener:
         if id not in subscriptions:
             return b'Error: this peer is not subscribed to this id'
 
-        last_post = subscriptions[id]['last_post'] if new else None 
+        last_post = subscriptions[id].last_post if new else None 
         info = await self.node.get(id)
         if info:
             info = json.loads(info)
@@ -332,7 +332,8 @@ class Listener:
 
         selected = subscriptions[id]['posts']
         if last_post != None:
-            selected = selected[selected.bisect_right(last_post):]
+            dummy_post = Post(None, id=last_post)
+            selected = selected[selected.bisect_right(dummy_post):]
 
         posts_str = list(map(lambda x: x.__dict__, selected))
         return json.dumps(posts_str).encode()
