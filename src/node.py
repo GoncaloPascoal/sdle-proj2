@@ -404,7 +404,7 @@ async def save_kademlia_state_periodically(node: Server, id: str, frequency=300)
             await f.write(pickle.dumps(node.storage))
         await asyncio.sleep(frequency)
 
-async def save_local_state_periodically(frequency=30):
+async def save_local_state_periodically(id: str, frequency=30):
     global state
 
     while True:
@@ -481,7 +481,7 @@ def main():
     # Save Kademlia state every 5 minutes
     loop.create_task(save_kademlia_state_periodically(node, args.id))
     # Save local state every minute
-    loop.create_task(save_local_state_periodically())
+    loop.create_task(save_local_state_periodically(args.id))
 
     listener = Listener(node, args)
     loop.create_task(listener.start_listening())
