@@ -4,7 +4,6 @@ import asyncio, json, logging, time
 from argparse import ArgumentParser, ArgumentTypeError, Namespace, RawDescriptionHelpFormatter
 from asyncio.streams import StreamReader, StreamWriter
 from datetime import datetime
-from threading import Thread
 from typing import ByteString, Dict, Tuple
 from utils import alnum
 
@@ -58,7 +57,7 @@ class SubscriptionInfo:
 
     def add_new_posts(self, new):
         self.posts = self.posts.union(new)
-        
+
         if self.posts:
             if self.last_post == None:
                 self.last_post = self.posts[-1].id
@@ -122,6 +121,7 @@ class Listener:
             'UNSUB_NODE': self.unsubscribe_node,
             'GET': self.get,
             'GET_NODE': self.get_node,
+            'GET_SUB': self.get_subscriber,
         }
 
     async def post(self, message: str) -> ByteString:
@@ -281,7 +281,7 @@ class Listener:
             except ConnectionRefusedError:
                 # Source is not available, contact subscribers
                 subscribers: dict = info['subscribers']
-                sub_posts = SortedSet(key=lambda x: x['id'])
+                sub_posts = SortedSet()
 
                 for port in subscribers.values():
                     if port == self.args.rpc_port:
@@ -305,6 +305,7 @@ class Listener:
 
                         res = json.loads((await reader.read()).decode('utf-8'))
                         if isinstance(res, list):
+                            res = map(Post.from_dict, res)
                             sub_posts = sub_posts.union(res)
                         else:
                             print(res)
@@ -323,14 +324,14 @@ class Listener:
 
         selected = posts if last_post == None else posts[last_post + 1:]
         return json.dumps(list(map(lambda x: x.__dict__, selected))).encode()
-    
-    async def get_sub(self, id: str, last_post: int) -> ByteString:
+
+    async def get_subscriber(self, id: str, last_post: int) -> ByteString:
         global subscriptions
 
         if id not in subscriptions:
             return b'Error: not subscribed to this node'
 
-        selected = subscriptions[id]['posts']
+        selected = subscriptions[id].posts
         if last_post != None:
             dummy_post = Post(None, id=last_post)
             selected = selected[selected.bisect_right(dummy_post):]
