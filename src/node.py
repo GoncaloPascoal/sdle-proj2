@@ -4,7 +4,7 @@ import aiofiles, asyncio, json, logging, os, pickle, time
 from argparse import ArgumentParser, ArgumentTypeError, Namespace, RawDescriptionHelpFormatter
 from asyncio.streams import StreamReader, StreamWriter
 from asyncio import Lock
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import ByteString, Dict, Iterable, List, Tuple
 from utils import alnum
 from public_ip import get_public_ip
@@ -59,7 +59,7 @@ class SubscriptionInfo:
 
     def add_new_posts(self, new: Iterable):
         for post in new:
-            post.destroy_at = datetime.now() + timedelta(minutes=SubscriptionInfo.ttl)
+            post.destroy_at = time.time() + SubscriptionInfo.ttl * 60
 
         self.posts = self.posts.difference(new)
         self.posts.update(new)
@@ -71,7 +71,7 @@ class SubscriptionInfo:
                 self.last_post = max(self.last_post, self.posts[-1].id)
 
     def discard_old_posts(self) -> int:
-        now = datetime.now()
+        now = time.time()
         old = [post for post in self.posts if post.destroy_at <= now]
         self.posts = self.posts.difference(old)
         return len(old)
@@ -372,7 +372,6 @@ class Listener:
 
         def post_to_dict(post: Post):
             d = post.__dict__
-            d.pop('destroy_at', None)
             return d
 
         posts_str = list(map(post_to_dict, selected))
