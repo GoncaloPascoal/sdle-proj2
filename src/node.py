@@ -342,6 +342,9 @@ class Listener:
 
         return b'Error: information about source node is not available'
 
+    async def feed(self, id: str, new: bool) -> ByteString:
+        return b'OK'
+
     async def get_node(self, last_post: int) -> ByteString:
         global state
 
@@ -359,7 +362,12 @@ class Listener:
             dummy_post = Post(None, id=last_post)
             selected = selected[selected.bisect_right(dummy_post):]
 
-        posts_str = list(map(lambda x: x.__dict__, selected))
+        def post_to_dict(post: Post):
+            d = post.__dict__
+            d.pop('destroy_at', None)
+            return d
+
+        posts_str = list(map(post_to_dict, selected))
         return json.dumps(posts_str).encode()
 
     async def handle_request(self, reader: StreamReader, writer: StreamWriter):
