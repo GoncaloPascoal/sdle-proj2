@@ -150,6 +150,8 @@ class Listener:
 
         print(f'POST: {message}')
         state.posts.append(Post(message))
+        await save_local_state(self.args.id)
+
         return b'OK'
 
     async def subscribe(self, id: str) -> ByteString:
@@ -203,6 +205,7 @@ class Listener:
 
         state.subscribers[id] = port
         await update_kademlia_info(self.node, self.args)
+        await save_local_state(self.args.id)
 
         print(f'SUB_NODE: {id}')
         return b'OK'
@@ -254,9 +257,10 @@ class Listener:
 
         if id not in state.subscribers:
             return b'Error: this node is not subscribed'
-        
+
         state.subscribers.pop(id, None)
         await update_kademlia_info(self.node, self.args)
+        await save_local_state(self.args.id)
 
         print(f'UNSUB_NODE: {id}')
         return b'OK'
@@ -408,6 +412,12 @@ async def discard_posts_periodically():
             if n:
                 print(f'Discarded {n} posts from {id}')
 
+async def save_local_state(id: str):
+    global state
+
+    async with aiofiles.open(f'{id}.obj', 'wb') as f:
+        await f.write(pickle.dumps(state))
+
 async def save_kademlia_state_periodically(node: Server, id: str, frequency=300):
     while True:
         node.save_state(f'{id}.kd')
@@ -415,12 +425,9 @@ async def save_kademlia_state_periodically(node: Server, id: str, frequency=300)
             await f.write(pickle.dumps(node.storage))
         await asyncio.sleep(frequency)
 
-async def save_local_state_periodically(id: str, frequency=30):
-    global state
-
+async def save_local_state_periodically(id: str, frequency=180):
     while True:
-        async with aiofiles.open(f'{id}.obj', 'wb') as f:
-            await f.write(pickle.dumps(state))
+        await save_local_state(id)
         await asyncio.sleep(frequency)
 
 def main():
@@ -491,7 +498,7 @@ def main():
 
     # Save Kademlia state every 5 minutes
     loop.create_task(save_kademlia_state_periodically(node, args.id))
-    # Save local state every minute
+    # Save local state every 3 minutes
     loop.create_task(save_local_state_periodically(args.id))
 
     listener = Listener(node, args)
