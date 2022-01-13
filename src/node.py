@@ -70,7 +70,8 @@ class SubscriptionInfo:
                 self.last_post = max(self.last_post, self.posts[-1].id)
 
     def discard_old_posts(self) -> int:
-        old = [post for post in self.posts if post.destroy_at <= datetime.now()]
+        now = datetime.now()
+        old = [post for post in self.posts if post.destroy_at <= now]
         self.posts = self.posts.difference(old)
         return len(old)
 
@@ -292,9 +293,10 @@ class Listener:
                 await writer.drain()
 
                 res = json.loads((await reader.read()).decode('utf-8'))
-                res = map(Post.from_dict, res)
+                res = list(map(Post.from_dict, res))
 
-                state.subscriptions[id].add_new_posts(res)
+                async with state.subscriptions[id].lock:
+                    state.subscriptions[id].add_new_posts(res)
                 print(state.subscriptions[id])
 
                 return b'OK'
@@ -332,7 +334,8 @@ class Listener:
                     except ConnectionRefusedError:
                         pass
 
-                state.subscriptions[id].add_new_posts(sub_posts)
+                async with state.subscriptions[id].lock:
+                    state.subscriptions[id].add_new_posts(sub_posts)
                 print(state.subscriptions[id])
 
                 return b'OK'
