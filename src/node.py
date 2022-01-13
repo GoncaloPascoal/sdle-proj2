@@ -7,6 +7,7 @@ from asyncio import Lock
 from datetime import datetime, timedelta
 from typing import ByteString, Dict, Iterable, List, Tuple
 from utils import alnum
+from public_ip import get_public_ip
 
 from sortedcontainers import SortedSet
 
@@ -93,6 +94,7 @@ class State:
         self.subscribers: Dict[str, int] = {}
 
 state = State()
+ip = '127.0.0.1'
 
 def parse_address(addr: str) -> Tuple[str, int]:
     parts = addr.split(':')
@@ -189,6 +191,7 @@ class Listener:
             if response == b'OK':
                 print(f'SUB: {id}')
                 state.subscriptions[id] = SubscriptionInfo()
+                await save_local_state(self.args.id)
 
             writer.close()
             await writer.wait_closed()
@@ -230,7 +233,7 @@ class Listener:
                     port
                 ) # TODO: IP
             except ConnectionRefusedError:
-                return b'Source is offline, cannot subscribe'
+                return b'Source is offline, cannot unsubscribe'
 
             data = json.dumps({
                 'method': 'UNSUB_NODE',
@@ -244,6 +247,7 @@ class Listener:
             if response == b'OK':
                 print(f'UNSUB: {id}')
                 state.subscriptions.pop(id, None)
+                await save_local_state(self.args.id)
 
             writer.close()
             await writer.wait_closed()
@@ -431,7 +435,7 @@ async def save_local_state_periodically(id: str, frequency=180):
         await asyncio.sleep(frequency)
 
 def main():
-    global state
+    global state, ip
 
     parser = ArgumentParser(description='Node that is part of a decentralized '
         'timeline newtwork.\nIt publishes small text messages (posts) to its '
@@ -454,6 +458,12 @@ def main():
         metavar='M', type=int, default=15)
 
     args = parser.parse_args()
+
+    try:
+        ip = get_public_ip()
+        print(f'Your public IP is {ip}')
+    except RuntimeError as e:
+        print(e)
 
     SubscriptionInfo.ttl = args.ttl
 
@@ -479,20 +489,23 @@ def main():
     loop = asyncio.get_event_loop()
     kademlia_path = f'{args.id}.kd'
 
-    if os.path.exists(kademlia_path):
-        node = loop.run_until_complete(Server.load_state(kademlia_path, args.port, interface='127.0.0.1'))
+    recover = os.path.exists(kademlia_path)
+    if recover:
+        node = loop.run_until_complete(Server.load_state(kademlia_path, args.port))
+        if storage != None:
+            node.storage = storage
     else:
         node = Server(node_id=digest(args.id), storage=storage)
-        loop.run_until_complete(node.listen(args.port, interface='127.0.0.1'))
+        loop.run_until_complete(node.listen(args.port))
 
-        if args.peers:
-            # Start the bootstrapping process (providing addresses for more nodes in
-            # the command line arguments gives more fault tolerance)
-            loop.run_until_complete(node.bootstrap(args.peers))
+    if args.peers:
+        # Start the bootstrapping process (providing addresses for more nodes in
+        # the command line arguments gives more fault tolerance)
+        loop.run_until_complete(node.bootstrap(args.peers))
 
-            print('Bootstrap process finished...')
-        else:
-            print('Starting a new Kademlia network...')
+        print('Bootstrap process finished...')
+    elif not recover:
+        print('Starting a new Kademlia network...')
 
     loop.run_until_complete(update_kademlia_info(node, args))
 
