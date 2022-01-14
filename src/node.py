@@ -145,6 +145,7 @@ class Listener:
             'GET': self.get,
             'GET_NODE': self.get_node,
             'GET_SUB': self.get_subscriber,
+            'FEED': self.feed,
         }
 
     async def post(self, message: str) -> ByteString:
@@ -157,7 +158,7 @@ class Listener:
         return b'OK'
 
     async def subscribe(self, id: str) -> ByteString:
-        global state
+        global state, ip
 
         if id == self.args.id:
             return b'Error: a peer cannot subscribe to itself'
@@ -168,17 +169,17 @@ class Listener:
         info = await self.node.get(id)
         if info:
             info = json.loads(info)
-            ip, port = parse_address(info['addr'])
+            ip_sub, port = parse_address(info['addr'])
 
             try:
-                reader, writer = await asyncio.open_connection(ip, port)
+                reader, writer = await asyncio.open_connection(ip_sub, port)
             except ConnectionRefusedError:
                 return b'Source is offline, cannot subscribe'
 
             data = json.dumps({
                 'method': 'SUB_NODE',
                 'id': self.args.id,
-                'ip': self.args.ip,
+                'ip': ip,
                 'port': self.args.rpc_port,
             }).encode()
             writer.write(data)
@@ -340,26 +341,6 @@ class Listener:
 
         return b'Error: information about source node is not available'
 
-    async def feed(self, new: bool) -> ByteString:
-        global state
-
-        for id in state.subscriptions:
-            res = await self.get(id, new)
-
-            if res != b'OK':
-                return res
-
-        feed = SortedSet(key=lambda x: -x[1].timestamp)
-
-        for id, info in state.subscriptions.items():
-            feed.update(map(lambda x: (id, x), info.posts))
-
-        print('Subscription Feed')
-        for id, post in feed:
-            print(f'\t@{id} --- {post}')
-
-        return b'OK'
-
     async def get_node(self, last_post: int) -> ByteString:
         global state
 
@@ -383,6 +364,26 @@ class Listener:
 
         posts_str = list(map(post_to_dict, selected))
         return json.dumps(posts_str).encode()
+
+    async def feed(self, new: bool) -> ByteString:
+        global state
+
+        for id in state.subscriptions:
+            res = await self.get(id, new)
+
+            if res != b'OK':
+                return res
+
+        feed = SortedSet(key=lambda x: -x[1].timestamp)
+
+        for id, info in state.subscriptions.items():
+            feed.update(map(lambda x: (id, x), info.posts))
+
+        print('Subscription Feed')
+        for id, post in feed:
+            print(f'\t@{id} --- {post}')
+
+        return b'OK'
 
     async def handle_request(self, reader: StreamReader, writer: StreamWriter):
         req = (await reader.read()).decode('utf-8')
