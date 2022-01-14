@@ -36,8 +36,9 @@ def main():
     parser_sub   = subparsers.add_parser('SUB' , help='subscribe to a node with a specific id')
     parser_unsub = subparsers.add_parser('UNSUB', help='unsubscribe from a node with a specific id')
     parser_get   = subparsers.add_parser('GET' , help='get a node\'s timeline')
+    parser_feed  = subparsers.add_parser('FEED', help='get a node\'s feed (posts from all its subscriptions)')
 
-    for subparser in [parser_post, parser_sub, parser_unsub, parser_get]:
+    for subparser in subparsers.choices.values():
         subparser.add_argument('port', help='port of target node', type=int)
         subparser.add_argument('--ip', help='ip of target node (defaults to localhost)',
             default='127.0.0.1', metavar='ADDR')
@@ -48,8 +49,9 @@ def main():
         subparser.add_argument('id', help='node identifier',
             type=alnum)
 
-    parser_get.add_argument('-n', '--new', help='only ask for new posts',
-        action='store_true')
+    for subparser in [parser_get, parser_feed]:
+        subparser.add_argument('-n', '--new', help='only ask for new posts',
+            action='store_true')
 
     args = parser.parse_args()
 
