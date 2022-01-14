@@ -340,7 +340,24 @@ class Listener:
 
         return b'Error: information about source node is not available'
 
-    async def feed(self, id: str, new: bool) -> ByteString:
+    async def feed(self, new: bool) -> ByteString:
+        global state
+
+        for id in state.subscriptions:
+            res = await self.get(id, new)
+
+            if res != b'OK':
+                return res
+
+        feed = SortedSet(key=lambda x: -x[1].timestamp)
+
+        for id, info in state.subscriptions.items():
+            feed.update(map(lambda x: (id, x), info.posts))
+
+        print('Subscription Feed')
+        for id, post in feed:
+            print(f'\t@{id} --- {post}')
+
         return b'OK'
 
     async def get_node(self, last_post: int) -> ByteString:
