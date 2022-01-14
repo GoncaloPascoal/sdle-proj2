@@ -407,8 +407,7 @@ class Listener:
     async def start_listening(self):
         self.server = await asyncio.start_server(
             self.handle_request,
-            '127.0.0.1',
-            self.args.rpc_port
+            port=self.args.rpc_port,
         )
         await self.server.serve_forever()
 
