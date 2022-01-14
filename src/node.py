@@ -464,15 +464,20 @@ def main():
         metavar='M', type=int, default=15)
     parser.add_argument('--local', help='force localhost instead of public IP',
         action='store_true')
+    parser.add_argument('--ip', help='override the published IP address (useful when peers '
+        'are in the same private network but behind NAT)')
 
     args = parser.parse_args()
 
-    if not args.local:
-        try:
-            ip = get_public_ip()
-            print(f'Your public IP is {ip}')
-        except RuntimeError as e:
-            print(e)
+    if args.ip:
+        ip = args.ip
+    else:
+        if not args.local:
+            try:
+                ip = get_public_ip()
+                print(f'Your public IP is {ip}')
+            except RuntimeError as e:
+                print(e)
 
     SubscriptionInfo.ttl = args.ttl
 
