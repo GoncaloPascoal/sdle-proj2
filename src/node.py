@@ -115,10 +115,10 @@ def parse_address(addr: str) -> Tuple[str, int]:
     return ip, port
 
 def gen_kademlia_info(port: int) -> str:
-    global state
+    global state, ip
 
     info = {
-        'port': port,
+        'addr': f'{ip}:{port}',
         'subscribers': state.subscribers,
     }
 
@@ -145,6 +145,7 @@ class Listener:
             'GET': self.get,
             'GET_NODE': self.get_node,
             'GET_SUB': self.get_subscriber,
+            'FEED': self.feed,
         }
 
     async def post(self, message: str) -> ByteString:
@@ -157,7 +158,7 @@ class Listener:
         return b'OK'
 
     async def subscribe(self, id: str) -> ByteString:
-        global state
+        global state, ip
 
         if id == self.args.id:
             return b'Error: a peer cannot subscribe to itself'
@@ -168,19 +169,17 @@ class Listener:
         info = await self.node.get(id)
         if info:
             info = json.loads(info)
-            port = info['port']
+            ip_sub, port = parse_address(info['addr'])
 
             try:
-                reader, writer = await asyncio.open_connection(
-                    '127.0.0.1',
-                    port
-                ) # TODO: IP
+                reader, writer = await asyncio.open_connection(ip_sub, port)
             except ConnectionRefusedError:
                 return b'Source is offline, cannot subscribe'
 
             data = json.dumps({
                 'method': 'SUB_NODE',
                 'id': self.args.id,
+                'ip': ip,
                 'port': self.args.rpc_port,
             }).encode()
             writer.write(data)
@@ -200,13 +199,13 @@ class Listener:
 
         return b'Error: subscription process failed'
 
-    async def subscribe_node(self, id: str, port: int) -> ByteString:
+    async def subscribe_node(self, id: str, ip: str, port: int) -> ByteString:
         global state
 
         if id in state.subscribers:
             return b'Error: this node is already subscribed'
 
-        state.subscribers[id] = port
+        state.subscribers[id] = f'{ip}:{port}'
         await update_kademlia_info(self.node, self.args)
         await save_local_state(self.args.id)
 
@@ -225,13 +224,10 @@ class Listener:
         info = await self.node.get(id)
         if info:
             info = json.loads(info)
-            port = info['port']
+            ip, port = parse_address(info['addr'])
 
             try:
-                reader, writer = await asyncio.open_connection(
-                    '127.0.0.1',
-                    port
-                ) # TODO: IP
+                reader, writer = await asyncio.open_connection(ip, port)
             except ConnectionRefusedError:
                 return b'Source is offline, cannot unsubscribe'
 
@@ -283,13 +279,10 @@ class Listener:
         info = await self.node.get(id)
         if info:
             info = json.loads(info)
-            port = info['port']
+            ip, port = parse_address(info['addr'])
 
             try:
-                reader, writer = await asyncio.open_connection(
-                    '127.0.0.1',
-                    port,
-                ) # TODO: IP
+                reader, writer = await asyncio.open_connection(ip, port)
 
                 data = json.dumps({
                     'method': 'GET_NODE',
@@ -313,15 +306,13 @@ class Listener:
                 subscribers: dict = info['subscribers']
                 sub_posts = SortedSet()
 
-                for port in subscribers.values():
+                for addr in subscribers.values():
+                    ip, port = parse_address(addr)
                     if port == self.args.rpc_port:
                         continue
 
                     try:
-                        reader, writer = await asyncio.open_connection(
-                            '127.0.0.1',
-                            port,
-                        ) # TODO: IP
+                        reader, writer = await asyncio.open_connection(ip, port)
 
                         data = json.dumps({
                             'method': 'GET_SUB',
@@ -350,9 +341,6 @@ class Listener:
 
         return b'Error: information about source node is not available'
 
-    async def feed(self, id: str, new: bool) -> ByteString:
-        return b'OK'
-
     async def get_node(self, last_post: int) -> ByteString:
         global state
 
@@ -377,6 +365,26 @@ class Listener:
         posts_str = list(map(post_to_dict, selected))
         return json.dumps(posts_str).encode()
 
+    async def feed(self, new: bool) -> ByteString:
+        global state
+
+        for id in state.subscriptions:
+            res = await self.get(id, new)
+
+            if res != b'OK':
+                return res
+
+        feed = SortedSet(key=lambda x: -x[1].timestamp)
+
+        for id, info in state.subscriptions.items():
+            feed.update(map(lambda x: (id, x), info.posts))
+
+        print('Subscription Feed')
+        for id, post in feed:
+            print(f'\t@{id} --- {post}')
+
+        return b'OK'
+
     async def handle_request(self, reader: StreamReader, writer: StreamWriter):
         req = (await reader.read()).decode('utf-8')
         command = json.loads(req)
@@ -399,8 +407,7 @@ class Listener:
     async def start_listening(self):
         self.server = await asyncio.start_server(
             self.handle_request,
-            '127.0.0.1',
-            self.args.rpc_port
+            port=self.args.rpc_port,
         )
         await self.server.serve_forever()
 
@@ -455,14 +462,22 @@ def main():
         action='store_true')
     parser.add_argument('--ttl', help='how many minutes to store posts for',
         metavar='M', type=int, default=15)
+    parser.add_argument('--local', help='force localhost instead of public IP',
+        action='store_true')
+    parser.add_argument('--ip', help='override the published IP address (useful when peers '
+        'are in the same private network but behind NAT)')
 
     args = parser.parse_args()
 
-    try:
-        ip = get_public_ip()
-        print(f'Your public IP is {ip}')
-    except RuntimeError as e:
-        print(e)
+    if args.ip:
+        ip = args.ip
+    else:
+        if not args.local:
+            try:
+                ip = get_public_ip()
+                print(f'Your public IP is {ip}')
+            except RuntimeError as e:
+                print(e)
 
     SubscriptionInfo.ttl = args.ttl
 
