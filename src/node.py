@@ -370,11 +370,10 @@ class Listener:
     async def feed(self, new: bool) -> ByteString:
         global state
 
+        coro = []
         for id in state.subscriptions:
-            res = await self.get(id, new)
-
-            if res != b'OK':
-                return res
+            coro.append(self.get(id, new))
+        results = await asyncio.gather(*coro)
 
         feed = SortedSet(key=lambda x: -x[1].timestamp)
 
@@ -384,6 +383,10 @@ class Listener:
         print('Subscription Feed')
         for id, post in feed:
             print(f'\t@{id} --- {post}')
+
+        for res in results:
+            if res != b'OK':
+                return res
 
         return b'OK'
 
