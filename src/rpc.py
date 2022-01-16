@@ -3,6 +3,8 @@ import asyncio, json
 from argparse import ArgumentParser
 from utils import alnum
 
+from rich import print
+
 async def send_command(ip: str, port: int, args: dict):
     try:
         reader, writer = await asyncio.open_connection(ip, port)

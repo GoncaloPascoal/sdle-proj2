@@ -1,1 +1,1 @@
-pip3 install kademlia sortedcontainers aiofiles
+pip3 install kademlia sortedcontainers aiofiles rich

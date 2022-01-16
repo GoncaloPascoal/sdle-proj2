@@ -14,6 +14,8 @@ from sortedcontainers import SortedSet
 from kademlia.network import Server
 from kademlia.utils import digest
 
+from rich import print
+
 class Post:
     counter = 0
 
@@ -37,7 +39,7 @@ class Post:
         return cls(d['message'], d['id'], d['timestamp'])
 
     def __repr__(self) -> str:
-        dt = datetime.fromtimestamp(self.timestamp / 1e9)
+        dt = datetime.fromtimestamp(self.timestamp / 1e9).strftime('%Y-%m-%d, %H:%M:%S')
         return f'({self.id} - {dt} - \'{self.message}\')'
 
     def __eq__(self, o: object) -> bool:
