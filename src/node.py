@@ -495,6 +495,8 @@ def main():
     if os.path.exists(state_path):
         with open(state_path, 'rb') as f:
             state = pickle.load(f)
+            if state.posts:
+                Post.counter = state.posts[-1].id + 1
 
     kademlia_storage_path = f'{args.id}.kds'
     storage = None
@@ -533,6 +535,8 @@ def main():
     listener = Listener(node, args)
     loop.create_task(listener.start_listening())
     loop.create_task(discard_posts_periodically())
+
+    print(f'[b]Node [yellow]{args.id}[/yellow] up, listening for commands @ {ip}:{args.rpc_port}[/b]')
 
     try:
         loop.run_forever()

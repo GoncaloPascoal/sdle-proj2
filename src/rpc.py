@@ -18,7 +18,11 @@ async def send_command(ip: str, port: int, args: dict):
     await writer.drain()
 
     response = (await reader.read()).decode('utf-8')
-    print(response)
+
+    if response == 'OK':
+        print(f'[green]{response}[/green]')
+    else:
+        print(f'[red]{response}[/red]')
 
     writer.close()
     await writer.wait_closed()
