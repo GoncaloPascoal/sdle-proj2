@@ -153,7 +153,7 @@ class Listener:
     async def post(self, message: str) -> ByteString:
         global state
 
-        print(f'POST: {message}')
+        print(f'[purple]POST:[/purple] {message}')
         state.posts.append(Post(message))
         await save_local_state(self.args.id)
 
@@ -190,7 +190,7 @@ class Listener:
 
             response = await reader.read()
             if response == b'OK':
-                print(f'SUB: {id}')
+                print(f'[purple]SUB:[/purple] {id}')
                 state.subscriptions[id] = SubscriptionInfo()
                 await save_local_state(self.args.id)
 
@@ -211,7 +211,7 @@ class Listener:
         await update_kademlia_info(self.node, self.args)
         await save_local_state(self.args.id)
 
-        print(f'SUB_NODE: {id}')
+        print(f'[purple]SUB_NODE:[/purple] {id}')
         return b'OK'
 
     async def unsubscribe(self, id: str) -> ByteString:
@@ -243,7 +243,7 @@ class Listener:
 
             response = await reader.read()
             if response == b'OK':
-                print(f'UNSUB: {id}')
+                print(f'[purple]UNSUB:[/purple] {id}')
                 state.subscriptions.pop(id, None)
                 await save_local_state(self.args.id)
 
@@ -264,7 +264,7 @@ class Listener:
         await update_kademlia_info(self.node, self.args)
         await save_local_state(self.args.id)
 
-        print(f'UNSUB_NODE: {id}')
+        print(f'[purple]UNSUB_NODE:[/purple] {id}')
         return b'OK'
 
     async def get(self, id: str, new: bool) -> ByteString:
@@ -300,19 +300,28 @@ class Listener:
 
                 async with state.subscriptions[id].lock:
                     state.subscriptions[id].add_new_posts(res)
-                print(state.subscriptions[id])
+
+                if new:
+                    print('[b]New Posts[/b]')
+                    for post in res:
+                        print(f'\t{post}')
+                else:
+                    print(state.subscriptions[id])
 
                 return b'OK'
             except ConnectionRefusedError:
                 # Source is not available, contact subscribers
+                print('[red]Source is unavailable, contacting subscribers...[/red]')
+
                 subscribers: dict = info['subscribers']
                 sub_posts = SortedSet()
 
-                for addr in subscribers.values():
+                for id_sub, addr in subscribers.items():
                     ip, port = parse_address(addr)
                     if port == self.args.rpc_port:
                         continue
 
+                    print(f'Contacting {id_sub}...')
                     try:
                         reader, writer = await asyncio.open_connection(ip, port)
 
@@ -333,11 +342,17 @@ class Listener:
                         else:
                             print(res)
                     except ConnectionRefusedError:
-                        pass
+                        print(f'[red]{id_sub} is unavailable, contacting next subscriber...[/red]')
 
                 async with state.subscriptions[id].lock:
                     state.subscriptions[id].add_new_posts(sub_posts)
-                print(state.subscriptions[id])
+
+                if new:
+                    print('[b]New Posts[/b]')
+                    for post in sub_posts:
+                        print(f'\t{post}')
+                else:
+                    print(state.subscriptions[id])
 
                 return b'OK'
 
